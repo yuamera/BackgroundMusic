@@ -24,6 +24,8 @@
 // Local Includes
 #import "BGMAudioDeviceManager.h"
 
+@class BGMUserDefaults;
+
 // System Includes
 #import <Cocoa/Cocoa.h>
 
@@ -37,9 +39,12 @@ typedef struct BGMAppVolumeAndPan {
 
 @interface BGMAppVolumesController : NSObject
 
+// Initializes the controller with the given menu, volume view, audio device manager, and user
+// defaults (used for persisting per-app volume settings across app restarts).
 - (id) initWithMenu:(NSMenu*)menu
       appVolumeView:(NSView*)view
-       audioDevices:(BGMAudioDeviceManager*)audioDevices;
+       audioDevices:(BGMAudioDeviceManager*)audioDevices
+        userDefaults:(BGMUserDefaults*)userDefaults;
 
 // See BGMBackgroundMusicDevice::SetAppVolume.
 - (void)  setVolume:(SInt32)volume

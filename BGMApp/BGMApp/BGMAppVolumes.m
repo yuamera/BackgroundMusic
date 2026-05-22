@@ -225,6 +225,19 @@ static NSString* const kMoreAppsMenuTitle          = @"More Apps";
     }
 }
 
+- (void) setVolumeAndPanForAppWithoutAction:(NSRunningApplication*)app
+                                     volume:(int)volume
+                                        pan:(int)pan {
+    NSMenuItem* item = [self getMenuItemForApp:app];
+    if (!item) return;
+
+    for (NSView* subview in item.view.subviews) {
+        if (volume != -1 && [subview isKindOfClass:[BGMAVM_VolumeSlider class]]) {
+            [(BGMAVM_VolumeSlider*)subview setRelativeVolumeWithoutAction:volume];
+        }
+    }
+}
+
 - (NSInteger) firstMenuItemIndex {
     return [self lastMenuItemIndex] - numMenuItems + 1;
 }
@@ -581,6 +594,23 @@ static NSString* const kMoreAppsMenuTitle          = @"More Apps";
 - (void) setRelativeVolume:(int)relativeVolume {
     self.intValue = relativeVolume;
     [self snap];
+}
+
+- (void) setRelativeVolumeWithoutAction:(int)relativeVolume {
+    NSMenuItem* __strong strongMenuItem = menuItem;
+    if (!strongMenuItem) return;
+
+    // Temporarily disable the action to prevent appVolumeChanged from firing.
+    SEL originalAction = self.action;
+    id originalTarget = self.target;
+    self.action = nil;
+    self.target = nil;
+
+    self.intValue = relativeVolume;
+    [self snap];
+
+    self.action = originalAction;
+    self.target = originalTarget;
 }
 
 - (void) appVolumeChanged {

@@ -29,6 +29,7 @@
 #import "BGM_Types.h"
 #import "BGM_Utils.h"
 #import "BGMAppVolumes.h"
+#import "BGMUserDefaults.h"
 
 // PublicUtility Includes
 #import "CACFArray.h"
@@ -42,21 +43,29 @@
 #pragma clang assume_nonnull begin
 
 @implementation BGMAppVolumesController {
-    // The App Volumes UI.
     BGMAppVolumes* appVolumes;
     BGMAudioDeviceManager* audioDevices;
+    BGMUserDefaults* userDefaults;
+
+    // Holds bundle IDs -> target volumes for apps that have been assigned a saved volume in the UI
+    // but haven't yet been restored on the driver side (because the app hasn't started playing audio
+    // yet). A single deferred attempt is made to restore these volumes.
+    NSMutableDictionary<NSString*, NSNumber*>* pendingDriverRestores;
 }
 
 #pragma mark Initialisation
 
 - (id) initWithMenu:(NSMenu*)menu
       appVolumeView:(NSView*)view
-       audioDevices:(BGMAudioDeviceManager*)devices {
+       audioDevices:(BGMAudioDeviceManager*)devices
+        userDefaults:(BGMUserDefaults*)defaults {
     if ((self = [super init])) {
         audioDevices = devices;
+        userDefaults = defaults;
+        pendingDriverRestores = [NSMutableDictionary new];
         appVolumes = [[BGMAppVolumes alloc] initWithController:self
-                                                       bgmMenu:menu
-                                                 appVolumeView:view];
+                                                        bgmMenu:menu
+                                                  appVolumeView:view];
 
         // Create the menu items for controlling app volumes.
         NSArray<NSRunningApplication*>* apps = [[NSWorkspace sharedWorkspace] runningApplications];
@@ -75,8 +84,27 @@
 
 - (void) dealloc {
     [[NSWorkspace sharedWorkspace] removeObserver:self
-                                       forKeyPath:@"runningApplications"
-                                          context:nil];
+                                        forKeyPath:@"runningApplications"
+                                           context:nil];
+}
+
+
+// Checks whether the given bundle ID appears in the app volumes reported by the audio driver.
+- (BOOL) isBundleIDPresentInVolumes:(NSString*)bundleID
+                         fromDevice:(const CACFArray&)volumesFromBGMDevice {
+    for (UInt32 i = 0; i < volumesFromBGMDevice.GetNumberItems(); i++) {
+        CACFDictionary appVolume(false);
+        volumesFromBGMDevice.GetCACFDictionary(i, appVolume);
+
+        CACFString dictBundleID;
+        dictBundleID.DontAllowRelease();
+        appVolume.GetCACFString(CFSTR(kBGMAppVolumesKey_BundleID), dictBundleID);
+
+        if ([bundleID isEqualToString:(__bridge NSString*)dictBundleID.GetCFString()]) {
+            return YES;
+        }
+    }
+    return NO;
 }
 
 // Adds a volume control menu item for each given app.
@@ -93,11 +121,105 @@
         if ([self shouldBeIncludedInMenu:app]) {
             BGMAppVolumeAndPan initial = [self getVolumeAndPanForApp:app
                                                          fromVolumes:volumesFromBGMDevice];
+
             [appVolumes insertMenuItemForApp:app
                                initialVolume:initial.volume
                                   initialPan:initial.pan];
+
+            NSString* bundleID = app.bundleIdentifier;
+            if (bundleID) {
+                SInt32 savedVolume = [userDefaults appVolumeForBundleID:bundleID withDefault:-1];
+                if (savedVolume != -1) {
+                    [appVolumes setVolumeAndPanForAppWithoutAction:app
+                                                            volume:savedVolume
+                                                               pan:initial.pan];
+
+                    if ([self isBundleIDPresentInVolumes:bundleID fromDevice:volumesFromBGMDevice]) {
+                        audioDevices.bgmDevice.SetAppVolume(savedVolume,
+                                                             app.processIdentifier,
+                                                             (__bridge_retained CFStringRef)bundleID);
+                    } else {
+                        pendingDriverRestores[bundleID] = @(savedVolume);
+                    }
+                }
+            }
         }
     }
+
+    if (pendingDriverRestores.count > 0) {
+        [self scheduleDeferredDriverRestore];
+    }
+}
+
+// Schedules a deferred attempt to restore pending volumes on the driver. This gives apps time to
+// start playing audio and register as BGMDevice clients.
+- (void) scheduleDeferredDriverRestore {
+    __unsafe_unretained BGMAppVolumesController* weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        [weakSelf performDeferredDriverRestore];
+    });
+}
+
+// First deferred attempt. Tries to restore pending volumes by sending SetAppVolume to the driver
+// for each pending app, regardless of whether it appears in GetAppVolumes. (GetAppVolumes only
+// returns clients with non-default volumes, so it's not a reliable way to check if an app is
+// registered.)
+- (void) performDeferredDriverRestore {
+    if (pendingDriverRestores.count == 0) return;
+
+    NSMutableDictionary<NSString*, NSNumber*>* remaining = [NSMutableDictionary new];
+
+    for (NSString* bundleID in pendingDriverRestores) {
+        SInt32 targetVolume = [pendingDriverRestores[bundleID] intValue];
+        BOOL restored = NO;
+
+        NSArray<NSRunningApplication*>* runningApps = [[NSWorkspace sharedWorkspace] runningApplications];
+        for (NSRunningApplication* app in runningApps) {
+            if ([app.bundleIdentifier isEqualToString:bundleID]) {
+                audioDevices.bgmDevice.SetAppVolume(targetVolume,
+                                                     app.processIdentifier,
+                                                     (__bridge_retained CFStringRef)bundleID);
+                restored = YES;
+                break;
+            }
+        }
+
+        if (!restored) {
+            remaining[bundleID] = @(targetVolume);
+        }
+    }
+
+    pendingDriverRestores = remaining;
+
+    if (pendingDriverRestores.count > 0) {
+        __unsafe_unretained BGMAppVolumesController* weakSelf = self;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+            [weakSelf finalDriverRestoreAttempt];
+        });
+    }
+}
+
+// Final attempt. Gives up on any apps that still aren't registered as driver clients.
+- (void) finalDriverRestoreAttempt {
+    if (pendingDriverRestores.count == 0) return;
+
+    for (NSString* bundleID in pendingDriverRestores) {
+        SInt32 targetVolume = [pendingDriverRestores[bundleID] intValue];
+
+        NSArray<NSRunningApplication*>* runningApps = [[NSWorkspace sharedWorkspace] runningApplications];
+        for (NSRunningApplication* app in runningApps) {
+            if ([app.bundleIdentifier isEqualToString:bundleID]) {
+                audioDevices.bgmDevice.SetAppVolume(targetVolume,
+                                                     app.processIdentifier,
+                                                     (__bridge_retained CFStringRef)bundleID);
+                break;
+            }
+        }
+    }
+
+    [pendingDriverRestores removeAllObjects];
 }
 
 - (BGMAppVolumeAndPan) getVolumeAndPanForApp:(NSRunningApplication *)app {
@@ -172,6 +294,12 @@ forAppWithProcessID:(pid_t)processID
            bundleID:(NSString* __nullable)bundleID {
     // Update the app's volume.
     audioDevices.bgmDevice.SetAppVolume(volume, processID, (__bridge_retained CFStringRef)bundleID);
+
+    // Persist the volume to UserDefaults.
+    NSString* nonNullBundleID = bundleID;
+    if (nonNullBundleID) {
+        [userDefaults setAppVolume:volume forBundleID:nonNullBundleID];
+    }
 
     // If this volume is for FaceTime, set the volume for the avconferenced process as well. This
     // works around FaceTime not playing its own audio. It plays UI sounds through

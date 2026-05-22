@@ -364,7 +364,8 @@ static NSString* const kOptShowDockIcon      = @"--show-dock-icon";
     // Add the app volumes to the menu.
     appVolumes = [[BGMAppVolumesController alloc] initWithMenu:self.bgmMenu
                                                  appVolumeView:self.appVolumeView
-                                                  audioDevices:audioDevices];
+                                                  audioDevices:audioDevices
+                                                   userDefaults:userDefaults];
 }
 
 - (void) applicationWillTerminate:(NSNotification*)aNotification {

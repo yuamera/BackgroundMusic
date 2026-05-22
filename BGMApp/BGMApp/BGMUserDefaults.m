@@ -36,6 +36,7 @@ static NSString* const kDefaultKeyPreferredDeviceUIDs   = @"PreferredDeviceUIDs"
 static NSString* const kDefaultKeyStatusBarIcon         = @"StatusBarIcon";
 static NSString* const kDefaultKeyPauseDelayMS          = @"PauseDelayMS";
 static NSString* const kDefaultKeyMaxUnpauseDelayMS     = @"MaxUnpauseDelayMS";
+static NSString* const kDefaultKeyAppVolumes            = @"AppVolumes";
 
 // Labels for Keychain Data
 static NSString* const kKeychainLabelGPMDPAuthCode =
@@ -284,6 +285,33 @@ static NSString* const kKeychainLabelGPMDPAuthCode =
     } else {
         transientDefaults[key] = @(value);
     }
+}
+
+#pragma mark App Volume Persistence
+
+- (void) setAppVolume:(SInt32)volume forBundleID:(NSString*)bundleID {
+    if (!bundleID) return;
+    NSMutableDictionary<NSString*, NSNumber*>* volumes = [self savedAppVolumesMutable];
+    volumes[bundleID] = @(volume);
+    [self set:kDefaultKeyAppVolumes to:volumes];
+}
+
+- (SInt32) appVolumeForBundleID:(NSString*)bundleID withDefault:(SInt32)defaultVolume {
+    if (!bundleID) return defaultVolume;
+    NSDictionary<NSString*, NSNumber*>* volumes = [self savedAppVolumes];
+    NSNumber* volume = volumes[bundleID];
+    return volume ? [volume intValue] : defaultVolume;
+}
+
+// Returns the persisted app volumes dictionary, or an empty dictionary if none exists.
+- (NSDictionary<NSString*, NSNumber*>*) savedAppVolumes {
+    NSDictionary<NSString*, NSNumber*>* __nullable volumes = [self get:kDefaultKeyAppVolumes];
+    return volumes ?: @{};
+}
+
+// Returns a mutable copy of the persisted app volumes dictionary.
+- (NSMutableDictionary<NSString*, NSNumber*>*) savedAppVolumesMutable {
+    return [[self savedAppVolumes] mutableCopy];
 }
 
 @end

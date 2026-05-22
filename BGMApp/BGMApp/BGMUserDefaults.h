@@ -65,7 +65,15 @@
 @property NSUInteger pauseDelayMS;
 @property NSUInteger maxUnpauseDelayMS;
 
+#pragma mark App Volume Persistence
+
+// Saves the per-app volume for the given bundle ID to UserDefaults. The volume value uses the same
+// raw range as the audio driver: [kAppRelativeVolumeMinRawValue, kAppRelativeVolumeMaxRawValue].
+- (void) setAppVolume:(SInt32)volume forBundleID:(NSString*)bundleID;
+
+// Returns the persisted volume for the given bundle ID, or defaultVolume if none has been saved.
+- (SInt32) appVolumeForBundleID:(NSString*)bundleID withDefault:(SInt32)defaultVolume;
+
 @end
 
 #pragma clang assume_nonnull end
-

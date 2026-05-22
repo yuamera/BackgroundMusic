@@ -49,6 +49,11 @@
 - (BGMAppVolumeAndPan) getVolumeAndPanForApp:(NSRunningApplication*)app;
 - (void) setVolumeAndPan:(BGMAppVolumeAndPan)volumeAndPan forApp:(NSRunningApplication*)app;
 
+// Sets the slider position without triggering the action (no SetAppVolume call).
+- (void) setVolumeAndPanForAppWithoutAction:(NSRunningApplication*)app
+                                     volume:(int)volume
+                                        pan:(int)pan;
+
 @end
 
 // Protocol for the UI custom classes
@@ -83,6 +88,7 @@
 @interface BGMAVM_VolumeSlider : NSSlider <BGMAppVolumeMenuItemSubview>
 
 - (void) setRelativeVolume:(int)relativeVolume;
+- (void) setRelativeVolumeWithoutAction:(int)relativeVolume;
 
 @end
 
